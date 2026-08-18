@@ -89,9 +89,11 @@ if missing:
     log.error("نقص في إعدادات Giant Chat: %s", ", ".join(missing))
     sys.exit(1)
 
-USERNAME = C["username"].strip()
-PASSWORD = C["password"]
-OWNER = (C.get("owner_username") or USERNAME).strip().lower()
+USERNAME = str(C.get("username", "bot")).strip()
+PASSWORD = str(C.get("password", ""))
+# ضمان عدم انهيار البوت إذا كان اسم الماستر مفقوداً
+OWNER_VAL = C.get("owner_username") or USERNAME
+OWNER = str(OWNER_VAL).strip().lower()
 POLL = max(1.0, float(C.get("poll_seconds", 2)))
 SEARCH_URL = C.get("music_search_url") or "https://giant-chat-app.lovable.app/api/public/search-track"
 YOUTUBE_COOKIES_PATH = str(C.get("youtube_cookies_path", "youtube_cookies.txt")).strip()
@@ -759,9 +761,9 @@ async def _yt_download_audio(page_url, source_label, piped_api=None, video_id=No
                                             f.write(chunk)
                                     if out.stat().st_size > 4096:
                                         return out, None
-        except Exception as e:
-            log.warning("Piped audio download failed: %s", e)
-            asyncio.create_task(dm_send_master(f"⚠️ فشل تحميل الصوت من Piped:\n🔎 {e}"))
+            except Exception as e:
+                log.warning("Piped audio download failed: %s", e)
+                asyncio.create_task(dm_send_master(f"⚠️ فشل تحميل الصوت من Piped:\n🔎 {e}"))
 
         if yt_dlp is None:
             return None, "مكتبة yt-dlp غير مثبتة، ولم يتوفر مصدر Piped."
@@ -866,7 +868,9 @@ async def _store_media(local_path, kind="music", content_type=None):
             filename = f"{uuid.uuid4().hex}{local_path.suffix.lower()}"
             target = local_dir / filename
             shutil.copy2(local_path, target)
-            return f"{base_url}{MEDIA_PATH}/{quote(filename)}"
+            # التأكد من وجود / في نهاية الرابط
+            final_base = base_url if base_url.endswith("/") else base_url + "/"
+            return f"{final_base}{MEDIA_PATH}/{quote(filename)}"
         except Exception as e:
             log.warning("public local media failed: %s", e)
 
