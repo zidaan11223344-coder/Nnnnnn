@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+logs/
+generated_music/
+published_media/
+youtube_cookies.txt
+.env
+.git/

@@ -1,0 +1,10 @@
+supabase==2.15.0
+realtime==2.4.3
+websockets==14.2
+aiohttp>=3.11.18
+yt-dlp>=2025.1.15
+
+Pillow>=10.0.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2
+requests>=2.31.0
