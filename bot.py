@@ -397,8 +397,24 @@ def fit_font(text, max_width, start_size=32, min_size=16):
 def render_gift_image(gift, sender_name, receiver_name):
     if not PIL_AVAILABLE:
         raise RuntimeError("Pillow غير مثبتة؛ لن تظهر أسماء FROM وTO داخل الصورة")
-    template = Path(__file__).resolve().parent / GIFT_TEMPLATE_FILES.get(str(gift["display_id"]), "assets/gift_template_present.webp")
-    if not template.exists():
+    
+    # محاولة إيجاد القالب في مسارات متعددة لضمان العمل على Railway
+    template_name = GIFT_TEMPLATE_FILES.get(str(gift["display_id"]), "assets/gift_template_present.webp")
+    possible_paths = [
+        BASE_DIR / template_name,
+        BASE_DIR / "assets" / os.path.basename(template_name),
+        Path("/app") / template_name,
+        Path("/app/assets") / os.path.basename(template_name)
+    ]
+    
+    template = None
+    for p in possible_paths:
+        if p.exists():
+            template = p
+            break
+            
+    if not template:
+        log.error(f"Template not found: {template_name}. Checked: {possible_paths}")
         return None
     image = Image.open(template).convert("RGBA")
     draw = ImageDraw.Draw(image)
@@ -630,8 +646,22 @@ async def _yt_extract(search_query):
         return None
 
     if "spotify" in q.lower() or os.path.isfile(spotify_cookies):
-        track = await asyncio.to_thread(spotify_extract)
-        if track: return track
+        try:
+            track = await asyncio.to_thread(spotify_extract)
+            if track: return track
+        except: pass
+
+    # YouTube Direct Fallback (if Piped fails)
+    def yt_direct_extract():
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "format": "bestaudio/best", "default_search": "ytsearch1", "noplaylist": True}
+        youtube_cookies = str(C.get("youtube_cookies_path", "youtube_cookies.txt")).strip()
+        if os.path.isfile(youtube_cookies): opts["cookiefile"] = youtube_cookies
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch1:{q}", download=False)
+            entry = (info.get("entries") or [None])[0] if info else None
+            if entry:
+                return {"id": entry.get("id"), "title": entry.get("title"), "artist": entry.get("uploader") or "YouTube", "youtube_url": entry.get("webpage_url"), "thumbnail": entry.get("thumbnail"), "duration": entry.get("duration")}
+        return None
 
     # Piped fallback
     for api in PIPED_APIS:
@@ -659,6 +689,10 @@ async def _yt_extract(search_query):
                 }
         except Exception as e:
             log.warning("Piped search failed %s: %s", api, e)
+
+    # Final Direct Fallback
+    track = await asyncio.to_thread(yt_direct_extract)
+    if track: return track
 
     if yt_dlp is None:
         return None
@@ -1786,11 +1820,21 @@ async def resolve_email():
     if rows and rows[0].get("auth_email"): return rows[0]["auth_email"]
     raise RuntimeError("تعذر إيجاد البريد")
 
-async def join(name):
-    room = await find_room(name)
+async def join(name_or_id):
+    # محاولة البحث كـ ID أولاً (إذا كان UUID صالحاً)
+    room = None
+    if len(name_or_id) > 30 and "-" in name_or_id:
+        rows, _ = await table_select(lambda: sb.table("rooms").select("id,name").eq("id", name_or_id).limit(1).execute())
+        if rows: room = rows[0]
+    
+    # إذا لم ينجح، ابحث بالاسم
     if not room:
-        await dm_send_master(f"❌ لم أجد غرفة باسم: {name}")
+        room = await find_room(name_or_id)
+        
+    if not room:
+        await dm_send_master(f"❌ لم أجد غرفة بالاسم أو الأيدي: {name_or_id}")
         return False, "الغرفة غير موجودة"
+        
     data, err = await rpc("room_join", {"_room": room["id"], "_password": C.get("room_password", "")})
     if err:
         err_msg = str(err)
