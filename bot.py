@@ -853,19 +853,20 @@ async def start_media_server():
         name = os.path.basename(request.match_info.get("name", ""))
         if not name or name != request.match_info.get("name", ""):
             raise web.HTTPBadRequest(text="invalid media name")
-        path = media_dir / name
-        if not path.is_file():
-            raise web.HTTPNotFound()
-        return web.FileResponse(path)
+        
+        # البحث في مجلد الموسيقى أولاً
+        path = MUSIC_LOCAL_DIR / name
+        if path.is_file():
+            return web.FileResponse(path)
+            
+        # البحث في مجلد الهدايا ثانياً
+        path = GIFT_RENDER_DIR / name
+        if path.is_file():
+            return web.FileResponse(path)
+            
+        raise web.HTTPNotFound()
 
     app.router.add_get(f"{MEDIA_PATH}/{{name}}", media_handler)
-    # إضافة مسار إضافي لدعم الهدايا في نفس المجلد
-    async def gift_handler(request):
-        name = os.path.basename(request.match_info.get("name", ""))
-        path = GIFT_RENDER_DIR / name
-        if not path.is_file(): raise web.HTTPNotFound()
-        return web.FileResponse(path)
-    app.router.add_get(f"{MEDIA_PATH}/{{name}}", gift_handler)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     media_runner = runner
