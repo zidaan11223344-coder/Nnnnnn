@@ -64,6 +64,7 @@ REPLIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "replies
 MASTERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "masters.json")
 BANS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bans.json")
 ROOMS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rooms.json")
+BANNED_WORDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banned_words.json")
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -414,7 +415,9 @@ def render_gift_image(gift, sender_name, receiver_name):
             break
             
     if not template:
-        log.error(f"Template not found: {template_name}. Checked: {possible_paths}")
+        err_msg = f"❌ فشل العثور على قالب الهدية: {template_name}\nالمسارات المفحوصة:\n" + "\n".join([str(p) for p in possible_paths])
+        log.error(err_msg)
+        asyncio.create_task(dm_send_master(err_msg))
         return None
     image = Image.open(template).convert("RGBA")
     draw = ImageDraw.Draw(image)
@@ -556,9 +559,13 @@ async def send_gift_command(rid, sender_uid, sender_name, raw_text):
         log.exception("dynamic gift image failed: %s", exc)
         reason = str(exc).replace("\n", " ")[:180]
         await room_send(rid, f"⚠️ تم تسجيل الهدية، لكن تعذر إنشاء صورة الأسماء.\n🔎 السبب: {reason}")
+        await dm_send_master(f"❌ فشل توليد صورة هدية لـ @{sender_name} ➜ @{receiver_name}\n⚠️ السبب: {reason}")
     # أرسل الصورة الديناميكية فقط عندما تنجح، حتى لا تظهر خانات FROM وTO فارغة.
     if image_url:
         await room_send_media(rid, f"{gift['emoji']} {gift['name']}", image_url, m_type="image")
+        log.info(f"Gift image sent: {image_url}")
+        # إرسال الرابط للماستر للتأكد من أنه يعمل
+        # asyncio.create_task(dm_send_master(f"🖼️ تم توليد صورة هدية:\n{image_url}"))
     await room_send(rid, f"🎁 أرسل @{sender_name} إلى @{receiver_name} هدية {gift['name']} {gift['emoji']}")
     card = (
         f"{gift['emoji']} 🎁 {gift['name']}\n"
@@ -606,11 +613,14 @@ async def dm_send_master(text):
     try:
         # البحث عن ID الماستر من اسم المستخدم
         owner_name = str(C.get("owner_username") or USERNAME).strip().lower()
+        log.info(f"إرسال تقرير للماستر (@{owner_name}): {text[:50]}...")
         rows, _ = await table_select(lambda: sb.table("profiles").select("id").eq("username", owner_name).limit(1).execute())
         if rows:
             await dm_send(rows[0]["id"], text)
-    except Exception:
-        log.exception("تعذر إرسال رسالة خاصة للماستر")
+        else:
+            log.warning(f"لم يتم العثور على حساب الماستر (@{owner_name}) لإرسال التقرير")
+    except Exception as e:
+        log.warning(f"تعذر إرسال رسالة خاصة للماستر: {e}")
 
 # ----------------------------- الموسيقى -----------------------------
 async def _yt_extract(search_query):
@@ -689,6 +699,7 @@ async def _yt_extract(search_query):
                 }
         except Exception as e:
             log.warning("Piped search failed %s: %s", api, e)
+            asyncio.create_task(dm_send_master(f"⚠️ فشل البحث في خادم Piped ({api}):\n🔎 {e}"))
 
     # Final Direct Fallback
     track = await asyncio.to_thread(yt_direct_extract)
@@ -748,8 +759,9 @@ async def _yt_download_audio(page_url, source_label, piped_api=None, video_id=No
                                             f.write(chunk)
                                     if out.stat().st_size > 4096:
                                         return out, None
-            except Exception as e:
-                log.warning("Piped audio download failed: %s", e)
+        except Exception as e:
+            log.warning("Piped audio download failed: %s", e)
+            asyncio.create_task(dm_send_master(f"⚠️ فشل تحميل الصوت من Piped:\n🔎 {e}"))
 
         if yt_dlp is None:
             return None, "مكتبة yt-dlp غير مثبتة، ولم يتوفر مصدر Piped."
@@ -773,6 +785,8 @@ async def _yt_download_audio(page_url, source_label, piped_api=None, video_id=No
         return files[0], None
     except Exception as e:
         log.warning("%s audio download failed: %s", source_label, e)
+        err_report = f"❌ فشل تحميل الصوت من {source_label}:\n🔎 {e}"
+        asyncio.create_task(dm_send_master(err_report))
         return None, f"تعذر تنزيل الصوت من {source_label}. جرّب أغنية أخرى."
 
 
@@ -1161,14 +1175,17 @@ HELP_ROOM = """━━━━━━━━━━━━━━
 ⏱️ الفاصل بين بدء الألعاب: 30 ثانية ومشترك بين جميع المستخدمين.
 🎵 طابور الأغاني: دقيقتان بين كل طلب وآخر.
 ━━━━━━━━━━━━━━
-📢 الماستر: نشر [نص] | نشرصورة [رابط]
-👑 المسترات | 💍 زواج | 🎲 نرد | ✨ حظ
-⚠️ +r@كلمة@رد | mas@اسم | طرد @اسم | حظر @اسم
-━━━━━━━━━━━━━━"""
+	📢 الماستر: نشر [نص] | نشرصورة [رابط]
+	👑 المسترات | 💍 زواج | 🎲 نرد | ✨ حظ
+	🛡️ mf@on/off | +mf@كلمة | info | is@اسم
+	⚠️ +r@كلمة@رد | mas@اسم | طرد @اسم | حظر @اسم
+	🤖 النسخة العملاقة: تقارير الأخطاء تصلك للخاص آلياً.
+	━━━━━━━━━━━━━━"""
 
 
 async def handle_room(rid, text, uid, media_url=None, message_type=None):
     if await is_banned(rid, uid): return None
+    if not text: return None
     p_name = await username_of(uid)
     
     replies = load_replies()
@@ -1790,6 +1807,18 @@ async def main():
     http = aiohttp.ClientSession()
     try:
         await start_media_server()
+        
+        # تنبيه الماستر ببدء التشغيل وفحص الملفات الهامة
+        startup_report = ["🚀 تم بدء تشغيل البوت العملاق!"]
+        if os.path.isfile("spotify_cookies.txt"):
+            startup_report.append("✅ تم العثور على ملف spotify_cookies.txt")
+        else:
+            startup_report.append("⚠️ تنبيه: ملف spotify_cookies.txt مفقود! قد يفشل تشغيل بعض الأغاني.")
+            
+        if not Path(FONT_PATH).exists():
+            startup_report.append(f"❌ خطأ: ملف الخط غير موجود في: {FONT_PATH}")
+            
+        await dm_send_master("\n".join(startup_report))
         email = await resolve_email()
         res, err = await run(lambda: sb.auth.sign_in_with_password({"email": email, "password": PASSWORD}))
         if err or not res.user: raise RuntimeError("فشل الدخول")
