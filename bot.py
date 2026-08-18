@@ -764,6 +764,9 @@ async def _yt_download_audio(page_url, source_label, piped_api=None, video_id=No
             except Exception as e:
                 log.warning("Piped audio download failed: %s", e)
                 asyncio.create_task(dm_send_master(f"⚠️ فشل تحميل الصوت من Piped:\n🔎 {e}"))
+        
+        # إذا نجح Piped وتم إرجاع ملف، فالدالة ستخرج من try الخارجي عبر return.
+        # أما إذا لم ينجح، فسننتقل إلى yt-dlp كخيار بديل.
 
         if yt_dlp is None:
             return None, "مكتبة yt-dlp غير مثبتة، ولم يتوفر مصدر Piped."
